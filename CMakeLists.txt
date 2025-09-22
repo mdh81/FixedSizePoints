@@ -27,6 +27,7 @@ target_compile_options(FixedSizePoints PRIVATE -Wall -Wextra -pedantic)
 add_custom_target(
 	ShaderCopy
 	${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/PointCloud.wgsl ${CMAKE_BINARY_DIR}
+	COMMENT "Copying shader to binary directory"
 )
 
 add_dependencies(

@@ -25,12 +25,10 @@ wgpu::ShaderModule &ShaderLoader::getShaderModule(wgpu::Device &device) {
     if (!shaderModule) {
         wgpu::ShaderModuleDescriptor shaderDesc;
         shaderDesc.label = std::format("Shader generated from {}", shaderFileName).c_str();
-        // We use the extension mechanism to specify the WGSL part of the shader module descriptor
         wgpu::ShaderModuleWGSLDescriptor shaderCodeDesc;
         shaderCodeDesc.chain.next = nullptr;
         shaderCodeDesc.chain.sType = wgpu::SType::ShaderModuleWGSLDescriptor;
         shaderCodeDesc.code = getSource().c_str();
-        // Connect the chain
         shaderDesc.nextInChain = &shaderCodeDesc.chain;
         shaderModule = std::make_optional(device.createShaderModule(shaderDesc));
     }

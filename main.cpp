@@ -6,7 +6,6 @@
 
 #include <iostream>
 #include <print>
-#include <cassert>
 #include <vector>
 
 #include "ShaderLoader.h"
@@ -33,6 +32,8 @@ private:
 
 	void generatePointCloud();
 
+	void updateView();
+
 	GLFWwindow *window{nullptr};
 	Device device;
 	Queue queue;
@@ -45,8 +46,21 @@ private:
 
 	std::vector<float> pointData;
 	Buffer vertexBuffer;
+	Buffer viewUniformBuffer;
+	BindGroup bindGroup;
+	BindGroupLayout bindGroupLayout;
+	PipelineLayout pipelineLayout;
 
 	std::array<VertexAttribute, 2> vertexAttributes;
+
+	struct ViewUniforms {
+		float viewportSize[2]{};
+		float pointSize {};
+		float padding {};
+	};
+	ViewUniforms viewUniforms;
+
+	static auto constexpr Tolerance {1e-6F};
 };
 
 int main() {
@@ -61,6 +75,19 @@ int main() {
 	app.Terminate();
 
 	return EXIT_SUCCESS;
+}
+
+void Application::updateView() {
+	int frameBufferWidth{}, frameBufferHeight{};
+	glfwGetFramebufferSize(window, &frameBufferWidth, &frameBufferHeight);
+	if (std::fabs(static_cast<float>(frameBufferWidth) - viewUniforms.viewportSize[0]) > Tolerance ||
+		std::fabs(static_cast<float>(frameBufferHeight) - viewUniforms.viewportSize[1]) > Tolerance) {
+		viewUniforms.viewportSize[0] = static_cast<float>(frameBufferWidth);
+		viewUniforms.viewportSize[1] = static_cast<float>(frameBufferHeight);
+		viewUniforms.pointSize = 6.f;
+		queue.writeBuffer(viewUniformBuffer, 0, &viewUniforms, sizeof(ViewUniforms));
+		std::println("Updating view uniforms Width = {} Height = {} Point Size = {}", frameBufferWidth, frameBufferHeight, viewUniforms.pointSize);
+	}
 }
 
 void Application::generatePointCloud() {
@@ -141,6 +168,29 @@ void Application::setupPointCloudPipeline() {
 		pointCloudRenderPipelineDesc->multisample.alphaToCoverageEnabled = false;
 		pointCloudRenderPipelineDesc->layout = nullptr;
 
+		// Define binding layout (don't forget to = Default)
+		BindGroupLayoutEntry bindingLayout = Default;
+		// The binding index as used in the @binding attribute in the shader
+		bindingLayout.binding = 0;
+		// The stage that needs to access this resource
+		bindingLayout.visibility = ShaderStage::Vertex;
+		bindingLayout.buffer.type = BufferBindingType::Uniform;
+		bindingLayout.buffer.minBindingSize = 4 * sizeof(float);
+
+		// Create a bind group layout
+		BindGroupLayoutDescriptor bindGroupLayoutDesc;
+		bindGroupLayoutDesc.entryCount = 1;
+		bindGroupLayoutDesc.entries = &bindingLayout;
+		bindGroupLayout = device.createBindGroupLayout(bindGroupLayoutDesc);
+
+		// Create the pipeline layout
+		PipelineLayoutDescriptor layoutDesc;
+		layoutDesc.bindGroupLayoutCount = 1;
+		layoutDesc.bindGroupLayouts = reinterpret_cast<WGPUBindGroupLayout*>(&bindGroupLayout);
+		pipelineLayout = device.createPipelineLayout(layoutDesc);
+
+		pointCloudRenderPipelineDesc->layout = pipelineLayout;
+
 		pointCloudPipeline = device.createRenderPipeline(*pointCloudRenderPipelineDesc);
 
 		pointCloudShaderLoader.getShaderModule(device).release();
@@ -152,14 +202,37 @@ void Application::setupPointCloudPipeline() {
 		vertexBufferDescriptor.mappedAtCreation = false;
 		vertexBuffer = device.createBuffer(vertexBufferDescriptor);
 		queue.writeBuffer(vertexBuffer, 0, pointData.data(), vertexBufferDescriptor.size);
+
+		BufferDescriptor uniformBufferDescriptor;
+		uniformBufferDescriptor.size = 256;
+		uniformBufferDescriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst;
+		uniformBufferDescriptor.mappedAtCreation = false;
+		viewUniformBuffer = device.createBuffer(uniformBufferDescriptor);
+
+		// Create a binding
+		BindGroupEntry binding;
+		binding.binding = 0;
+		binding.buffer = viewUniformBuffer;
+		binding.offset = 0;
+		binding.size = sizeof(ViewUniforms);
+
+		// A bind group contains one or multiple bindings
+		BindGroupDescriptor bindGroupDesc{};
+		bindGroupDesc.layout = bindGroupLayout;
+		// There must be as many bindings as declared in the layout!
+		bindGroupDesc.entryCount = 1;
+		bindGroupDesc.entries = &binding;
+		bindGroup = device.createBindGroup(bindGroupDesc);
 	}
 }
 
 void Application::drawPointCloud(CommandEncoder& encoder, RenderPassDescriptor const& renderPassDesc) {
 	setupPointCloudPipeline();
+	updateView();
 	RenderPassEncoder renderPass = encoder.beginRenderPass(renderPassDesc);
 	renderPass.setPipeline(*pointCloudPipeline);
 	renderPass.setVertexBuffer(0, vertexBuffer, 0, vertexBuffer.getSize());
+	renderPass.setBindGroup(0, bindGroup, 0, nullptr);
 	renderPass.draw(pointData.size() / 6, 1, 0, 0);
 	renderPass.end();
 	renderPass.release();
@@ -226,6 +299,10 @@ void Application::Initialize() {
 
 void Application::Terminate() {
 	vertexBuffer.release();
+	viewUniformBuffer.release();
+	bindGroup.release();
+	bindGroupLayout.release();
+	pipelineLayout.release();
 	surface.unconfigure();
 	queue.release();
 	surface.release();
